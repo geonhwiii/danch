@@ -10,6 +10,8 @@ import SwiftUI
 struct NotchContentView: View {
     @EnvironmentObject var viewModel: NotchViewModel
     @StateObject private var gitModel = GitStatusModel()
+    @State private var showingCommitInput = false
+    @State private var commitMessage = ""
     
     var body: some View {
         ZStack {
@@ -83,8 +85,14 @@ struct NotchContentView: View {
             Divider()
                 .background(Color.white.opacity(0.2))
             
-            // Git 명령어 버튼들
-            gitActionButtons
+            // 커밋 메시지 입력 (조건부 표시)
+            if showingCommitInput {
+                commitMessageInput
+                    .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .top)))
+            } else {
+                // Git 명령어 버튼들
+                gitActionButtons
+            }
         }
         .padding(.top, 8)
     }
@@ -170,7 +178,7 @@ struct NotchContentView: View {
                 color: .green,
                 isEnabled: gitModel.hasChanges && !gitModel.isLoading
             ) {
-                gitModel.gitCommit(message: "Quick commit from danch")
+                showingCommitInput = true
             }
             
             // Push 버튼
@@ -185,6 +193,85 @@ struct NotchContentView: View {
         }
     }
     
+    // MARK: - Commit Message Input
+    private var commitMessageInput: some View {
+        VStack(spacing: 10) {
+            // 제목과 닫기 버튼
+            HStack {
+                Text("Commit Message")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundColor(.white)
+                
+                Spacer()
+                
+                // 닫기 버튼 (배경 없는 원형)
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showingCommitInput = false
+                        commitMessage = ""
+                    }
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.gray)
+                        .frame(width: 20, height: 20)
+                        .background(Circle().fill(Color.white.opacity(0.1)))
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+            
+            // TextField와 커밋 버튼을 한 줄에
+            HStack(spacing: 8) {
+                // TextField
+                TextField("Enter commit message...", text: $commitMessage)
+                    .textFieldStyle(PlainTextFieldStyle())
+                    .font(.system(size: 11))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .frame(height: 32) // 고정 높이
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.white.opacity(0.1))
+                            .stroke(Color.white.opacity(0.3), lineWidth: 1)
+                    )
+                    .onSubmit {
+                        performCommit()
+                    }
+                
+                // 커밋 버튼 (오른쪽에 배치)
+                Button {
+                    performCommit()
+                } label: {
+                    Text("Commit")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .frame(height: 32)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(commitMessage.isEmpty ? Color.gray.opacity(0.3) : Color.green)
+                        )
+                }
+                .disabled(commitMessage.isEmpty)
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+        .frame(maxWidth: .infinity) // 전체 너비 사용
+    }
+    
+    // MARK: - Helper Methods
+    private func performCommit() {
+        guard !commitMessage.isEmpty else { return }
+        
+        gitModel.gitCommit(message: commitMessage)
+        
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showingCommitInput = false
+            commitMessage = ""
+        }
+    }
 
 }
 
