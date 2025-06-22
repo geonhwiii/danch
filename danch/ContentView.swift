@@ -188,7 +188,7 @@ struct NotchContentView: View {
                     title: "Push",
                     icon: "arrow.up.circle",
                     color: .blue,
-                    isEnabled: !gitModel.isLoading && (gitModel.isAheadOfRemote || gitModel.hasChanges)
+                    isEnabled: !gitModel.isLoading && gitModel.isAheadOfRemote
                 ) {
                     gitModel.gitPush()
                 }

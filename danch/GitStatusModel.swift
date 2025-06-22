@@ -276,7 +276,6 @@ class GitStatusModel: ObservableObject {
         // 여기서는 기본적인 상태만 확인
         
         // 로컬에 커밋이 있고 아직 푸시되지 않았다면 ahead 상태로 가정
-        let headFile = directory.appendingPathComponent(".git/HEAD")
         let logsDir = directory.appendingPathComponent(".git/logs/refs/heads/\(currentBranch)")
         
         if fileManager.fileExists(atPath: logsDir.path) {
@@ -453,6 +452,7 @@ class GitStatusModel: ObservableObject {
     
     func gitPublish() {
         // git push -u origin 브랜치명
+        NSLog("🚀 Publishing branch '\(currentBranch)' to origin...")
         executeGitCommand("push", arguments: ["-u", "origin", currentBranch])
     }
     
@@ -476,6 +476,14 @@ class GitStatusModel: ObservableObject {
                     if result.success {
                         NSLog("✅ Git command succeeded: \(result.output)")
                         self.updateGitStatus()
+                        
+                        // Push나 Publish 명령어가 성공했을 때 원격 추적 상태 재확인
+                        if command == "push" {
+                            if let gitDir = self.gitDirectory {
+                                self.checkRemoteTrackingBranch(in: gitDir)
+                                NSLog("🔄 Rechecking remote tracking branch status after push...")
+                            }
+                        }
                     } else {
                         NSLog("❌ Git command failed: \(result.error)")
                         self.lastError = result.error
