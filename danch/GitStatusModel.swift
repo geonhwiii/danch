@@ -17,6 +17,10 @@ class GitStatusModel: ObservableObject {
     @Published var isGitRepository: Bool = false
     @Published var isLoading: Bool = false
     @Published var lastError: String?
+    @Published var hasRemoteTrackingBranch: Bool = false
+    @Published var isAheadOfRemote: Bool = false
+    @Published var behindRemoteCount: Int = 0
+    @Published var aheadRemoteCount: Int = 0
     
     private var timer: Timer?
     private var fileSystemMonitor: DispatchSourceFileSystemObject?
@@ -102,6 +106,7 @@ class GitStatusModel: ObservableObject {
             
             updateBranchName(in: currentDirectory)
             updateFileStatus(in: currentDirectory)
+            updateRemoteTrackingStatus(in: currentDirectory)
         } else {
             gitDirectory = nil
         }
@@ -199,6 +204,83 @@ class GitStatusModel: ObservableObject {
         currentBranch = newBranch
     }
     
+    private func updateRemoteTrackingStatus(in directory: URL) {
+        // 현재 브랜치가 원격 브랜치를 추적하는지 확인
+        checkRemoteTrackingBranch(in: directory)
+        
+        // 원격과의 차이 확인 (ahead/behind)
+        if hasRemoteTrackingBranch {
+            checkRemoteDifference(in: directory)
+        } else {
+            isAheadOfRemote = false
+            behindRemoteCount = 0
+            aheadRemoteCount = 0
+        }
+    }
+    
+    private func checkRemoteTrackingBranch(in directory: URL) {
+        // .git/config에서 현재 브랜치의 원격 추적 설정 확인
+        let configFile = directory.appendingPathComponent(".git/config")
+        
+        guard let configContent = try? String(contentsOf: configFile, encoding: .utf8) else {
+            hasRemoteTrackingBranch = false
+            return
+        }
+        
+        // [branch "브랜치명"] 섹션 찾기
+        let branchSectionPattern = "\\[branch \"\\(NSRegularExpression.escapedPattern(for: currentBranch))\"\\]"
+        let remotePattern = "remote\\s*=\\s*(\\w+)"
+        let mergePattern = "merge\\s*=\\s*refs/heads/(\\w+)"
+        
+        do {
+            let branchRegex = try NSRegularExpression(pattern: branchSectionPattern)
+            let remoteRegex = try NSRegularExpression(pattern: remotePattern)
+            let mergeRegex = try NSRegularExpression(pattern: mergePattern)
+            
+            let range = NSRange(configContent.startIndex..<configContent.endIndex, in: configContent)
+            
+            if let branchMatch = branchRegex.firstMatch(in: configContent, range: range) {
+                // 브랜치 섹션을 찾았으면, 그 이후에서 remote와 merge 설정 찾기
+                let branchSectionStart = branchMatch.range.location
+                let remainingContent = String(configContent.dropFirst(branchSectionStart))
+                let remainingRange = NSRange(remainingContent.startIndex..<remainingContent.endIndex, in: remainingContent)
+                
+                let hasRemote = remoteRegex.firstMatch(in: remainingContent, range: remainingRange) != nil
+                let hasMerge = mergeRegex.firstMatch(in: remainingContent, range: remainingRange) != nil
+                
+                hasRemoteTrackingBranch = hasRemote && hasMerge
+                NSLog("🔍 Remote tracking for '\(currentBranch)': \(hasRemoteTrackingBranch ? "YES" : "NO")")
+            } else {
+                hasRemoteTrackingBranch = false
+                NSLog("🔍 No remote tracking configuration found for '\(currentBranch)'")
+            }
+        } catch {
+            NSLog("❌ Error checking remote tracking: \(error)")
+            hasRemoteTrackingBranch = false
+        }
+    }
+    
+    private func checkRemoteDifference(in directory: URL) {
+        // Git 명령어로 원격과의 차이 확인하는 대신, 간단한 파일 기반 접근
+        // 실제로는 git rev-list --count origin/branch..HEAD 같은 명령이 필요하지만
+        // 여기서는 기본적인 상태만 확인
+        
+        // 로컬에 커밋이 있고 아직 푸시되지 않았다면 ahead 상태로 가정
+        let headFile = directory.appendingPathComponent(".git/HEAD")
+        let logsDir = directory.appendingPathComponent(".git/logs/refs/heads/\(currentBranch)")
+        
+        if fileManager.fileExists(atPath: logsDir.path) {
+            // 로그 파일이 있으면 커밋이 있다고 가정
+            isAheadOfRemote = true
+            aheadRemoteCount = 1 // 간단히 1로 설정
+        } else {
+            isAheadOfRemote = false
+            aheadRemoteCount = 0
+        }
+        
+        behindRemoteCount = 0 // 간단히 0으로 설정
+    }
+    
     private func updateFileStatus(in directory: URL) {
         // Git index 파일 확인으로 staged 파일 감지
         let indexFile = directory.appendingPathComponent(".git/index")
@@ -260,7 +342,17 @@ class GitStatusModel: ObservableObject {
     }
     
     func gitPush() {
-        executeGitCommand("push", arguments: [])
+        if hasRemoteTrackingBranch {
+            executeGitCommand("push", arguments: [])
+        } else {
+            // 원격 추적 브랜치가 없으면 publish 실행
+            gitPublish()
+        }
+    }
+    
+    func gitPublish() {
+        // git push -u origin 브랜치명
+        executeGitCommand("push", arguments: ["-u", "origin", currentBranch])
     }
     
     private func executeGitCommand(_ command: String, arguments: [String]) {

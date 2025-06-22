@@ -181,14 +181,27 @@ struct NotchContentView: View {
                 showingCommitInput = true
             }
             
-            // Push 버튼
-            GitActionButton(
-                title: "Push",
-                icon: "arrow.up.circle",
-                color: .purple,
-                isEnabled: gitModel.isGitRepository && !gitModel.isLoading
-            ) {
-                gitModel.gitPush()
+            // Push/Publish 버튼 (동적)
+            if gitModel.hasRemoteTrackingBranch {
+                // 원격 추적 브랜치가 있으면 Push 버튼
+                GitActionButton(
+                    title: "Push",
+                    icon: "arrow.up.circle",
+                    color: .blue,
+                    isEnabled: !gitModel.isLoading && (gitModel.isAheadOfRemote || gitModel.hasChanges)
+                ) {
+                    gitModel.gitPush()
+                }
+            } else {
+                // 원격 추적 브랜치가 없으면 Publish 버튼
+                GitActionButton(
+                    title: "Publish",
+                    icon: "cloud.upload",
+                    color: .purple,
+                    isEnabled: gitModel.isGitRepository && !gitModel.isLoading
+                ) {
+                    gitModel.gitPublish()
+                }
             }
         }
     }
