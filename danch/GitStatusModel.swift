@@ -19,6 +19,8 @@ class GitStatusModel: ObservableObject {
     @Published var lastError: String?
     
     private var timer: Timer?
+    private var fileSystemMonitor: DispatchSourceFileSystemObject?
+    private var gitDirectory: URL?
     private let fileManager = FileManager.default
     
     init() {
@@ -27,23 +29,61 @@ class GitStatusModel: ObservableObject {
     
     deinit {
         timer?.invalidate()
+        fileSystemMonitor?.cancel()
     }
     
     private func startMonitoring() {
         // 초기 상태 확인
         updateGitStatus()
         
-        // 5초마다 Git 상태 업데이트
-        timer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+        // Git 디렉토리가 있으면 실시간 모니터링 시작
+        if let gitDir = gitDirectory {
+            startFileSystemMonitoring(for: gitDir)
+        }
+        
+        // 백업으로 30초마다 Git 상태 업데이트 (파일 시스템 모니터링 실패 시 대비)
+        timer = Timer.scheduledTimer(withTimeInterval: 30.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.updateGitStatus()
             }
         }
     }
     
+    private func startFileSystemMonitoring(for directory: URL) {
+        let gitDir = directory.appendingPathComponent(".git")
+        
+        // .git 디렉토리 모니터링
+        let fileDescriptor = open(gitDir.path, O_EVTONLY)
+        guard fileDescriptor >= 0 else {
+            NSLog("❌ Failed to open .git directory for monitoring")
+            return
+        }
+        
+        fileSystemMonitor = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fileDescriptor,
+            eventMask: [.write, .rename, .delete],
+            queue: DispatchQueue.global(qos: .background)
+        )
+        
+        fileSystemMonitor?.setEventHandler { [weak self] in
+            Task { @MainActor in
+                NSLog("🔄 Git directory changed - updating status")
+                self?.updateGitStatus()
+            }
+        }
+        
+        fileSystemMonitor?.setCancelHandler {
+            close(fileDescriptor)
+        }
+        
+        fileSystemMonitor?.resume()
+        NSLog("✅ Started file system monitoring for .git directory")
+    }
+    
     private func updateGitStatus() {
         guard let currentDirectory = getCurrentWorkingDirectory() else {
             isGitRepository = false
+            gitDirectory = nil
             return
         }
         
@@ -52,8 +92,18 @@ class GitStatusModel: ObservableObject {
         isGitRepository = fileManager.fileExists(atPath: gitDir.path)
         
         if isGitRepository {
+            // Git 디렉토리가 변경되었으면 모니터링 재시작
+            if gitDirectory?.path != currentDirectory.path {
+                gitDirectory = currentDirectory
+                fileSystemMonitor?.cancel()
+                fileSystemMonitor = nil
+                startFileSystemMonitoring(for: currentDirectory)
+            }
+            
             updateBranchName(in: currentDirectory)
             updateFileStatus(in: currentDirectory)
+        } else {
+            gitDirectory = nil
         }
     }
     
@@ -131,14 +181,22 @@ class GitStatusModel: ObservableObject {
         }
         
         let trimmedContent = headContent.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newBranch: String
         
         if trimmedContent.hasPrefix("ref: refs/heads/") {
-            currentBranch = String(trimmedContent.dropFirst("ref: refs/heads/".count))
+            newBranch = String(trimmedContent.dropFirst("ref: refs/heads/".count))
         } else {
             // Detached HEAD 상태
             let shortHash = String(trimmedContent.prefix(7))
-            currentBranch = "HEAD \(shortHash)"
+            newBranch = "HEAD \(shortHash)"
         }
+        
+        // 브랜치가 변경되었을 때 로그 출력
+        if currentBranch != newBranch && !currentBranch.isEmpty {
+            NSLog("🔄 Branch changed: \(currentBranch) → \(newBranch)")
+        }
+        
+        currentBranch = newBranch
     }
     
     private func updateFileStatus(in directory: URL) {
@@ -146,10 +204,48 @@ class GitStatusModel: ObservableObject {
         let indexFile = directory.appendingPathComponent(".git/index")
         let hasIndex = fileManager.fileExists(atPath: indexFile.path)
         
-        // 간단한 파일 변경 감지 (실제로는 git status를 파싱해야 하지만 샌드박스 제한으로 파일 기반 접근)
+        // 워킹 디렉토리의 파일 변경 감지
+        let unstagedCount = detectUnstagedChanges(in: directory)
+        
+        // 상태 업데이트
+        let previousStagedFiles = stagedFiles
+        let previousUnstagedFiles = unstagedFiles
+        
         stagedFiles = hasIndex ? 1 : 0  // 실제 구현에서는 더 정교하게
-        unstagedFiles = 0  // 추후 개선
+        unstagedFiles = unstagedCount
         hasChanges = stagedFiles > 0 || unstagedFiles > 0
+        
+        // 변경사항이 있을 때만 로그 출력
+        if previousStagedFiles != stagedFiles || previousUnstagedFiles != unstagedFiles {
+            NSLog("📊 File status updated - Staged: \(stagedFiles), Unstaged: \(unstagedFiles)")
+        }
+    }
+    
+    private func detectUnstagedChanges(in directory: URL) -> Int {
+        // 간단한 방법: 최근 수정된 파일들 확인
+        // 실제로는 git status를 파싱해야 하지만, 기본적인 감지만 구현
+        
+        do {
+            let contents = try fileManager.contentsOfDirectory(
+                at: directory,
+                includingPropertiesForKeys: [.contentModificationDateKey],
+                options: [.skipsHiddenFiles]
+            )
+            
+            let now = Date()
+            let recentThreshold = now.addingTimeInterval(-3600) // 1시간 이내
+            
+            let recentFiles = contents.filter { url in
+                guard let modificationDate = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate else {
+                    return false
+                }
+                return modificationDate > recentThreshold
+            }
+            
+            return min(recentFiles.count, 5) // 최대 5개까지만 표시
+        } catch {
+            return 0
+        }
     }
     
     // MARK: - Git Commands
