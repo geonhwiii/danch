@@ -229,41 +229,28 @@ class GitStatusModel: ObservableObject {
     }
     
     private func checkRemoteTrackingBranch(in directory: URL) {
-        // .git/config에서 현재 브랜치의 원격 추적 설정 확인
-        let configFile = directory.appendingPathComponent(".git/config")
+        // Git 명령어로 직접 원격 추적 브랜치 확인
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = ["config", "--get", "branch.\(currentBranch).remote"]
+        process.currentDirectoryURL = directory
         
-        guard let configContent = try? String(contentsOf: configFile, encoding: .utf8) else {
-            hasRemoteTrackingBranch = false
-            return
-        }
-        
-        // [branch "브랜치명"] 섹션 찾기
-        let branchSectionPattern = "\\[branch \"\\(NSRegularExpression.escapedPattern(for: currentBranch))\"\\]"
-        let remotePattern = "remote\\s*=\\s*(\\w+)"
-        let mergePattern = "merge\\s*=\\s*refs/heads/(\\w+)"
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
         
         do {
-            let branchRegex = try NSRegularExpression(pattern: branchSectionPattern)
-            let remoteRegex = try NSRegularExpression(pattern: remotePattern)
-            let mergeRegex = try NSRegularExpression(pattern: mergePattern)
+            try process.run()
+            process.waitUntilExit()
             
-            let range = NSRange(configContent.startIndex..<configContent.endIndex, in: configContent)
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             
-            if let branchMatch = branchRegex.firstMatch(in: configContent, range: range) {
-                // 브랜치 섹션을 찾았으면, 그 이후에서 remote와 merge 설정 찾기
-                let branchSectionStart = branchMatch.range.location
-                let remainingContent = String(configContent.dropFirst(branchSectionStart))
-                let remainingRange = NSRange(remainingContent.startIndex..<remainingContent.endIndex, in: remainingContent)
-                
-                let hasRemote = remoteRegex.firstMatch(in: remainingContent, range: remainingRange) != nil
-                let hasMerge = mergeRegex.firstMatch(in: remainingContent, range: remainingRange) != nil
-                
-                hasRemoteTrackingBranch = hasRemote && hasMerge
-                NSLog("🔍 Remote tracking for '\(currentBranch)': \(hasRemoteTrackingBranch ? "YES" : "NO")")
-            } else {
-                hasRemoteTrackingBranch = false
-                NSLog("🔍 No remote tracking configuration found for '\(currentBranch)'")
-            }
+            // 원격 설정이 있고 비어있지 않으면 원격 추적 브랜치가 있다고 판단
+            hasRemoteTrackingBranch = !output.isEmpty && process.terminationStatus == 0
+            
+            NSLog("🔍 Remote tracking for '\(currentBranch)': \(hasRemoteTrackingBranch ? "YES" : "NO") (remote: '\(output)')")
+            
         } catch {
             NSLog("❌ Error checking remote tracking: \(error)")
             hasRemoteTrackingBranch = false
