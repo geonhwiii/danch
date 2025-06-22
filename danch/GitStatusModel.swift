@@ -8,6 +8,13 @@
 import Foundation
 import Combine
 
+enum GitAuthStatus {
+    case unknown      // 아직 확인 안 함
+    case checking     // 확인 중
+    case authenticated // 인증됨
+    case needsAuth    // 인증 필요
+}
+
 @MainActor
 class GitStatusModel: ObservableObject {
     @Published var currentBranch: String = ""
@@ -21,11 +28,14 @@ class GitStatusModel: ObservableObject {
     @Published var isAheadOfRemote: Bool = false
     @Published var behindRemoteCount: Int = 0
     @Published var aheadRemoteCount: Int = 0
+    @Published var authStatus: GitAuthStatus = .unknown
     
     private var timer: Timer?
     private var fileSystemMonitor: DispatchSourceFileSystemObject?
     private var gitDirectory: URL?
     private let fileManager = FileManager.default
+    private var lastAuthCheck: Date?
+    private var authCheckCache: GitAuthStatus?
     
     init() {
         startMonitoring()
@@ -279,6 +289,77 @@ class GitStatusModel: ObservableObject {
         }
         
         behindRemoteCount = 0 // 간단히 0으로 설정
+    }
+    
+    // MARK: - Authentication Status
+    func checkAuthenticationStatus() {
+        // 캐시 확인 (10분간 유효)
+        if let lastCheck = lastAuthCheck,
+           let cachedStatus = authCheckCache,
+           Date().timeIntervalSince(lastCheck) < 600 {
+            authStatus = cachedStatus
+            return
+        }
+        
+        // 원격 추적 브랜치가 있는 경우에만 인증 확인
+        guard hasRemoteTrackingBranch || !hasRemoteTrackingBranch else {
+            authStatus = .unknown
+            return
+        }
+        
+        authStatus = .checking
+        NSLog("🔐 Checking GitHub authentication status...")
+        
+        Task {
+            await checkRemoteAccess()
+        }
+    }
+    
+    private func checkRemoteAccess() async {
+        guard let gitDirectory = gitDirectory else {
+            await MainActor.run {
+                authStatus = .needsAuth
+            }
+            return
+        }
+        
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        process.arguments = ["ls-remote", "--heads", "origin"]
+        process.currentDirectoryURL = gitDirectory
+        
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = pipe
+        
+        do {
+            try process.run()
+            process.waitUntilExit()
+            
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8) ?? ""
+            
+            await MainActor.run {
+                if process.terminationStatus == 0 && !output.isEmpty {
+                    // 성공: 원격 저장소에 접근 가능
+                    authStatus = .authenticated
+                    NSLog("✅ GitHub authentication verified")
+                } else {
+                    // 실패: 인증 필요
+                    authStatus = .needsAuth
+                    NSLog("❌ GitHub authentication required: \(output)")
+                }
+                
+                // 결과 캐시
+                lastAuthCheck = Date()
+                authCheckCache = authStatus
+            }
+        } catch {
+            await MainActor.run {
+                authStatus = .needsAuth
+                NSLog("❌ Error checking authentication: \(error)")
+            }
+        }
     }
     
     private func updateFileStatus(in directory: URL) {

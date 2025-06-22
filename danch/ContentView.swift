@@ -193,14 +193,60 @@ struct NotchContentView: View {
                     gitModel.gitPush()
                 }
             } else {
-                // 원격 추적 브랜치가 없으면 Publish 버튼
+                // 원격 추적 브랜치가 없으면 Publish 버튼 (인증 상태에 따라 변경)
+                publishButton
+            }
+        }
+    }
+    
+    // MARK: - Publish Button (Dynamic)
+    private var publishButton: some View {
+        Group {
+            switch gitModel.authStatus {
+            case .unknown:
                 GitActionButton(
                     title: "Publish",
                     icon: "cloud.upload",
                     color: .purple,
                     isEnabled: gitModel.isGitRepository && !gitModel.isLoading
                 ) {
+                    // 처음 클릭 시 인증 상태 확인
+                    gitModel.checkAuthenticationStatus()
+                }
+                .onAppear {
+                    // 버튼이 표시될 때 인증 상태 확인
+                    gitModel.checkAuthenticationStatus()
+                }
+                
+            case .checking:
+                GitActionButton(
+                    title: "Checking...",
+                    icon: "clock",
+                    color: .gray,
+                    isEnabled: false
+                ) {
+                    // 확인 중에는 비활성화
+                }
+                
+            case .authenticated:
+                GitActionButton(
+                    title: "Publish",
+                    icon: "cloud.upload",
+                    color: .green,
+                    isEnabled: gitModel.isGitRepository && !gitModel.isLoading
+                ) {
                     gitModel.gitPublish()
+                }
+                
+            case .needsAuth:
+                GitActionButton(
+                    title: "Setup Auth",
+                    icon: "key.fill",
+                    color: .red,
+                    isEnabled: true
+                ) {
+                    // 인증 설정 안내 또는 재확인
+                    gitModel.checkAuthenticationStatus()
                 }
             }
         }
