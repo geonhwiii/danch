@@ -9,14 +9,14 @@ import SwiftUI
 
 struct NotchContentView: View {
     @EnvironmentObject var viewModel: NotchViewModel
+    @StateObject private var gitModel = GitStatusModel()
     
     var body: some View {
         ZStack {
-            // 노치 배경 - alcove 스타일
-            RoundedRectangle(cornerRadius: viewModel.isExpanded ? 32 : 18)
+            RoundedRectangle(cornerRadius: viewModel.isExpanded ? 32 : 16)
                 .fill(Color.black)
                 .overlay(
-                    RoundedRectangle(cornerRadius: viewModel.isExpanded ? 32 : 18)
+                    RoundedRectangle(cornerRadius: viewModel.isExpanded ? 32 : 16)
                         .stroke(.white.opacity(0.1), lineWidth: 0.5)
                 )
                 .shadow(color: .black.opacity(0.3), radius: 8, x: 0, y: 4)
@@ -25,120 +25,196 @@ struct NotchContentView: View {
             VStack(spacing: 0) {
                 // 축소 상태에서 보이는 부분 (항상 표시)
                 compactContent
-                    .frame(height: viewModel.isExpanded ? 32 : 28)
+                    .frame(height: viewModel.isExpanded ? 28 : 32)
                 
                 // 확장 상태에서만 보이는 부분
                 if viewModel.isExpanded {
                     expandedContent
-                        .transition(.asymmetric(
-                            insertion: .move(edge: .top).combined(with: .opacity),
-                            removal: .move(edge: .top).combined(with: .opacity)
-                        ))
+                        .frame(maxHeight: 132)
+                        .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .top)))
                 }
             }
+            .padding(.horizontal, 16)
+            .padding(.vertical, viewModel.isExpanded ? 16 : 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .contentShape(Rectangle())
         .gesture(
             DragGesture()
-                .onEnded { value in
-                    let verticalTranslation = value.translation.height
-                    if verticalTranslation > 30 && !viewModel.isExpanded {
-                        viewModel.expand()
-                    } else if verticalTranslation < -30 && viewModel.isExpanded {
-                        viewModel.collapse()
-                    }
-                }
+                .onEnded { _ in }
         )
     }
     
-    // MARK: - Compact Content (항상 보이는 부분)
+    // MARK: - Compact Content (축소 상태)
     private var compactContent: some View {
-        HStack(spacing: viewModel.isExpanded ? 12 : 8) {
-            // 시간 표시
-            Text(formatTime(viewModel.currentTime))
-                .font(.system(size: viewModel.isExpanded ? 14 : 12, weight: .semibold, design: .rounded))
-                .foregroundColor(.white)
+        HStack(spacing: 8) {
+            // Git 상태 아이콘
+            gitStatusIcon
+            
+            // 브랜치 이름
+            if gitModel.isGitRepository {
+                Text(gitModel.currentBranch)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+            } else {
+                Text("No Git")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.gray)
+            }
             
             Spacer()
             
-            // 간단한 상태 표시
-            HStack(spacing: 4) {
+            // 변경사항 표시
+            if gitModel.hasChanges {
                 Circle()
-                    .fill(.green)
+                    .fill(Color.orange)
                     .frame(width: 6, height: 6)
-                
-                if viewModel.isExpanded {
-                    Text("danch")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.white.opacity(0.7))
-                }
             }
         }
-        .padding(.horizontal, viewModel.isExpanded ? 16 : 12)
     }
     
-    // MARK: - Expanded Content (확장 시에만 보이는 부분)
+    // MARK: - Expanded Content (확장 상태)
     private var expandedContent: some View {
-        VStack(spacing: 16) {
-            // 구분선
-            Rectangle()
-                .fill(.white.opacity(0.2))
-                .frame(height: 1)
-                .padding(.horizontal, 16)
+        VStack(spacing: 12) {
+            // Git 저장소 정보
+            gitRepositoryInfo
             
-            // 시간과 날짜 (더 큰 크기)
-            VStack(spacing: 6) {
-                Text(formatTime(viewModel.currentTime))
-                    .font(.system(size: 24, weight: .bold, design: .rounded))
-                    .foregroundColor(.white)
-                
-                Text(formatDate(viewModel.currentTime))
+            Divider()
+                .background(Color.white.opacity(0.2))
+            
+            // Git 명령어 버튼들
+            gitActionButtons
+        }
+        .padding(.top, 8)
+    }
+    
+    // MARK: - Git Status Icon
+    private var gitStatusIcon: some View {
+        Group {
+            if gitModel.isLoading {
+                ProgressView()
+                    .scaleEffect(0.6)
+                    .progressViewStyle(CircularProgressViewStyle(tint: .white))
+            } else if gitModel.isGitRepository {
+                Image(systemName: "arrow.triangle.branch")
                     .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(.white.opacity(0.7))
+                    .foregroundColor(gitModel.hasChanges ? .orange : .green)
+            } else {
+                Image(systemName: "folder")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.gray)
             }
-            
-            // 추가 정보 영역
-            HStack(spacing: 20) {
-                // WiFi 상태
-                HStack(spacing: 8) {
-                    Image(systemName: "wifi")
-                        .foregroundColor(.green)
-                        .font(.system(size: 16))
-                    
-                    Text("연결됨")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.white.opacity(0.8))
-                }
+        }
+        .frame(width: 16, height: 16)
+    }
+    
+    // MARK: - Git Repository Info
+    private var gitRepositoryInfo: some View {
+        VStack(spacing: 6) {
+            HStack {
+                Text("Branch:")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.gray)
                 
                 Spacer()
                 
-                // 간단한 액션 버튼
-                Button(action: {
-                    viewModel.collapse()
-                }) {
-                    Image(systemName: "xmark")
-                        .foregroundColor(.white.opacity(0.6))
-                        .font(.system(size: 12))
-                }
-                .buttonStyle(PlainButtonStyle())
+                Text(gitModel.currentBranch)
+                    .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                    .foregroundColor(.white)
             }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 16)
+            
+            if gitModel.hasChanges {
+                HStack {
+                    Text("Changes:")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundColor(.gray)
+                    
+                    Spacer()
+                    
+                    HStack(spacing: 8) {
+                        if gitModel.stagedFiles > 0 {
+                            Label("\(gitModel.stagedFiles)", systemImage: "checkmark.circle.fill")
+                                .font(.system(size: 10))
+                                .foregroundColor(.green)
+                        }
+                        
+                        if gitModel.unstagedFiles > 0 {
+                            Label("\(gitModel.unstagedFiles)", systemImage: "circle")
+                                .font(.system(size: 10))
+                                .foregroundColor(.orange)
+                        }
+                    }
+                }
+            }
         }
     }
     
-    // MARK: - Helper Methods
-    private func formatTime(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        return formatter.string(from: date)
+    // MARK: - Git Action Buttons
+    private var gitActionButtons: some View {
+        HStack(spacing: 8) {
+            // Add 버튼
+            GitActionButton(
+                title: "Add",
+                icon: "plus.circle",
+                color: .blue,
+                isEnabled: gitModel.isGitRepository && !gitModel.isLoading
+            ) {
+                gitModel.gitAdd()
+            }
+            
+            // Commit 버튼
+            GitActionButton(
+                title: "Commit",
+                icon: "checkmark.circle",
+                color: .green,
+                isEnabled: gitModel.hasChanges && !gitModel.isLoading
+            ) {
+                gitModel.gitCommit(message: "Quick commit from danch")
+            }
+            
+            // Push 버튼
+            GitActionButton(
+                title: "Push",
+                icon: "arrow.up.circle",
+                color: .purple,
+                isEnabled: gitModel.isGitRepository && !gitModel.isLoading
+            ) {
+                gitModel.gitPush()
+            }
+        }
     }
     
-    private func formatDate(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "M월 d일 EEEE"
-        return formatter.string(from: date)
+
+}
+
+// MARK: - Git Action Button
+struct GitActionButton: View {
+    let title: String
+    let icon: String
+    let color: Color
+    let isEnabled: Bool
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 2) {
+                Image(systemName: icon)
+                    .font(.system(size: 16, weight: .medium))
+                
+                Text(title)
+                    .font(.system(size: 9, weight: .medium))
+            }
+            .foregroundColor(isEnabled ? color : .gray)
+            .frame(width: 60, height: 40)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isEnabled ? color.opacity(0.15) : Color.clear)
+                    .stroke(isEnabled ? color.opacity(0.3) : Color.gray.opacity(0.3), lineWidth: 1)
+            )
+        }
+        .disabled(!isEnabled)
+        .buttonStyle(PlainButtonStyle())
     }
 }
 
@@ -153,6 +229,6 @@ struct ContentView: View {
 #Preview {
     NotchContentView()
         .environmentObject(NotchViewModel())
-        .frame(width: 200, height: 32)
+        .frame(width: 180, height: 32)
         .background(.gray.opacity(0.3))
 }

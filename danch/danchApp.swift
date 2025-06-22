@@ -59,12 +59,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let window = window else { return }
                 
                 let newSize = isExpanded ? 
-                    NSSize(width: 420, height: 160) : 
+                    NSSize(width: 420, height: 200) : 
                     NSSize(width: 180, height: 32)
                 
                 let screenFrame = NSScreen.main?.frame ?? .zero
                 let notchX = (screenFrame.width - newSize.width) / 2
-                let notchY = screenFrame.height - newSize.height
+                
+                let fixedNotchTop = screenFrame.height
+                let notchY = fixedNotchTop - newSize.height
                 
                 NSAnimationContext.runAnimationGroup { context in
                     context.duration = 0.3
@@ -91,7 +93,9 @@ class NotchWindow: NSWindow {
         let notchWidth: CGFloat = 180
         let notchHeight: CGFloat = 32
         let notchX = (screenFrame.width - notchWidth) / 2
-        let notchY = screenFrame.height - notchHeight
+        
+        let fixedNotchTop = screenFrame.height
+        let notchY = fixedNotchTop - notchHeight
         
         let windowRect = NSRect(x: notchX, y: notchY, width: notchWidth, height: notchHeight)
         
@@ -173,22 +177,8 @@ class NotchTrackingView: NSView {
 // MARK: - NotchViewModel
 class NotchViewModel: ObservableObject {
     @Published var isExpanded = false
-    @Published var currentTime = Date()
     
     var cancellables = Set<AnyCancellable>()
-    private var timer: Timer?
-    
-    init() {
-        startTimer()
-    }
-    
-    private func startTimer() {
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            DispatchQueue.main.async {
-                self?.currentTime = Date()
-            }
-        }
-    }
     
     func expand() {
         DispatchQueue.main.async {
@@ -214,7 +204,5 @@ class NotchViewModel: ObservableObject {
         }
     }
     
-    deinit {
-        timer?.invalidate()
-    }
+
 }
