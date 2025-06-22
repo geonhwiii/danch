@@ -264,19 +264,69 @@ class GitStatusModel: ObservableObject {
     }
     
     private func executeGitCommand(_ command: String, arguments: [String]) {
+        guard let gitDirectory = gitDirectory else {
+            lastError = "Git repository not found"
+            return
+        }
+        
         isLoading = true
         lastError = nil
         
-        // App Sandbox 환경에서는 Process 실행이 제한되므로
-        // 실제 구현에서는 다른 방법을 사용해야 함
-        // 여기서는 UI 시뮬레이션만 수행
+        NSLog("🚀 Executing git command: git \(command) \(arguments.joined(separator: " "))")
         
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            self?.isLoading = false
-            self?.updateGitStatus()
+        Task {
+            do {
+                let result = try await runGitCommand(command, arguments: arguments, in: gitDirectory)
+                
+                await MainActor.run {
+                    self.isLoading = false
+                    if result.success {
+                        NSLog("✅ Git command succeeded: \(result.output)")
+                        self.updateGitStatus()
+                    } else {
+                        NSLog("❌ Git command failed: \(result.error)")
+                        self.lastError = result.error
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.isLoading = false
+                    self.lastError = error.localizedDescription
+                    NSLog("❌ Git command error: \(error.localizedDescription)")
+                }
+            }
+        }
+    }
+    
+    private func runGitCommand(_ command: String, arguments: [String], in directory: URL) async throws -> (success: Bool, output: String, error: String) {
+        return try await withCheckedThrowingContinuation { continuation in
+            let process = Process()
+            let outputPipe = Pipe()
+            let errorPipe = Pipe()
             
-            // 성공 시뮬레이션
-            print("Git command executed: git \(command) \(arguments.joined(separator: " "))")
+            // Git 실행 파일 경로 설정
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+            process.arguments = [command] + arguments
+            process.currentDirectoryURL = directory
+            process.standardOutput = outputPipe
+            process.standardError = errorPipe
+            
+            process.terminationHandler = { process in
+                let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+                let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+                
+                let output = String(data: outputData, encoding: .utf8) ?? ""
+                let error = String(data: errorData, encoding: .utf8) ?? ""
+                
+                let success = process.terminationStatus == 0
+                continuation.resume(returning: (success: success, output: output, error: error))
+            }
+            
+            do {
+                try process.run()
+            } catch {
+                continuation.resume(throwing: error)
+            }
         }
     }
 } 
