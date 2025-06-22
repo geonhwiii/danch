@@ -315,6 +315,19 @@ class GitStatusModel: ObservableObject {
         }
     }
     
+    func forceAuthenticationCheck() {
+        // 캐시 초기화
+        lastAuthCheck = nil
+        authCheckCache = nil
+        
+        authStatus = .checking
+        NSLog("🔐 Force checking GitHub authentication status...")
+        
+        Task {
+            await checkRemoteAccess()
+        }
+    }
+    
     private func checkRemoteAccess() async {
         guard let gitDirectory = gitDirectory else {
             await MainActor.run {
@@ -342,12 +355,19 @@ class GitStatusModel: ObservableObject {
             await MainActor.run {
                 if process.terminationStatus == 0 && !output.isEmpty {
                     // 성공: 원격 저장소에 접근 가능
+                    let previousStatus = authStatus
                     authStatus = .authenticated
-                    NSLog("✅ GitHub authentication verified")
+                    
+                    if previousStatus == .needsAuth {
+                        NSLog("🎉 GitHub authentication setup completed! Ready to publish.")
+                    } else {
+                        NSLog("✅ GitHub authentication verified")
+                    }
                 } else {
                     // 실패: 인증 필요
                     authStatus = .needsAuth
-                    NSLog("❌ GitHub authentication required: \(output)")
+                    NSLog("❌ GitHub authentication required. Please setup your Git credentials.")
+                    NSLog("💡 Try running 'git push' in terminal first to setup authentication.")
                 }
                 
                 // 결과 캐시

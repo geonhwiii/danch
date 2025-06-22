@@ -245,8 +245,8 @@ struct NotchContentView: View {
                     color: .red,
                     isEnabled: true
                 ) {
-                    // 인증 설정 안내 또는 재확인
-                    gitModel.checkAuthenticationStatus()
+                    // 인증 캐시 초기화 후 재확인
+                    gitModel.forceAuthenticationCheck()
                 }
             }
         }
